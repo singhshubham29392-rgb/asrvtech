@@ -4,11 +4,10 @@ import { config } from "dotenv";
 config();
 
 const apiPort = Number(process.env.API_PORT ?? "8787");
-const fromEmail = process.env.CONTACT_FROM_EMAIL ?? process.env.RESEND_FROM ?? "customers@asrvtech.in";
+const resendApiKey = process.env.RESEND_API_KEY;
+const fromEmail = process.env.RESEND_FROM ?? "ASRV Tech <customers@asrvtech.in>";
 const fromName = process.env.CONTACT_FROM_NAME ?? "ASRV Tech";
 const destinationEmail = process.env.CONTACT_TO_EMAIL ?? "customers@asrvtech.in";
-const cloudflareAccountId = process.env.CF_ACCOUNT_ID ?? process.env.CLOUDFLARE_ACCOUNT_ID;
-const cloudflareApiToken = process.env.CF_API_TOKEN ?? process.env.CLOUDFLARE_API_TOKEN;
 
 const escapeHtml = (value) =>
   value
@@ -61,9 +60,9 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (!cloudflareAccountId || !cloudflareApiToken) {
+  if (!resendApiKey) {
     const response = json(500, {
-      error: "CF_ACCOUNT_ID and CF_API_TOKEN are required for local email sending.",
+      error: "RESEND_API_KEY is not configured.",
     });
     res.writeHead(response.statusCode, response.headers);
     res.end(response.body);
@@ -93,10 +92,16 @@ const server = createServer(async (req, res) => {
 
     const subject = `New website inquiry from ${name} - ${new Date().toISOString()}`;
 
-    const mailPayload = {
-      to: destinationEmail,
-      from: { address: fromEmail, name: fromName },
-      reply_to: email,
+    const replyTo = `${name} <${email}>`;
+    const normalizedFrom =
+      fromEmail.includes("<") || !fromEmail.includes("@")
+        ? fromEmail
+        : `${fromName} <${fromEmail}>`;
+
+    const resendPayload = {
+      from: normalizedFrom,
+      to: [destinationEmail],
+      reply_to: replyTo,
       subject,
       text: [
         "New Contact Form Message",
@@ -118,32 +123,35 @@ const server = createServer(async (req, res) => {
       `,
     };
 
-    const mailResponse = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/email/sending/send`,
-      {
+    const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${cloudflareApiToken}`,
+        Authorization: `Bearer ${resendApiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(mailPayload),
-      },
-    );
+      body: JSON.stringify(resendPayload),
+    });
 
-    const cloudflarePayload = await mailResponse.json().catch(() => null);
+    const resendResponsePayload = await resendResponse.json().catch(() => null);
 
-    if (!mailResponse.ok) {
+    if (!resendResponse.ok) {
       const response = json(502, {
         error:
-          cloudflarePayload?.errors?.[0]?.message ??
-          "Failed to send email via Cloudflare Email REST API.",
+          resendResponsePayload?.message ??
+          resendResponsePayload?.error ??
+          "Failed to send email via Resend.",
       });
       res.writeHead(response.statusCode, response.headers);
       res.end(response.body);
       return;
     }
 
-    const response = json(200, { success: true, to: destinationEmail, subject });
+    const response = json(200, {
+      success: true,
+      to: destinationEmail,
+      subject,
+      id: resendResponsePayload?.id ?? null,
+    });
     res.writeHead(response.statusCode, response.headers);
     res.end(response.body);
   } catch {

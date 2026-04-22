@@ -36,11 +36,16 @@ const handleContact = async (request, env) => {
   }
 
   const destinationEmail = env.CONTACT_TO_EMAIL;
-  const fromEmail = env.CONTACT_FROM_EMAIL ?? "customers@asrvtech.in";
+  const resendApiKey = env.RESEND_API_KEY;
+  const fromEmail = env.RESEND_FROM ?? env.CONTACT_FROM_EMAIL ?? "ASRV Tech <customers@asrvtech.in>";
   const fromName = env.CONTACT_FROM_NAME ?? "ASRV Tech";
 
   if (!destinationEmail) {
     return json(500, { error: "CONTACT_TO_EMAIL is not configured." });
+  }
+
+  if (!resendApiKey) {
+    return json(500, { error: "RESEND_API_KEY is not configured." });
   }
 
   try {
@@ -64,27 +69,33 @@ const handleContact = async (request, env) => {
     const safeMessage = escapeHtml(message).replace(/\n/g, "<br/>");
     const subject = `New website inquiry from ${name} - ${new Date().toISOString()}`;
 
-    if (!env.EMAIL || typeof env.EMAIL.send !== "function") {
-      return json(500, {
-        error: "Cloudflare EMAIL binding is not configured.",
-      });
-    }
+    const replyTo = `${name} <${email}>`;
+    const normalizedFrom =
+      fromEmail.includes("<") || !fromEmail.includes("@")
+        ? fromEmail
+        : `${fromName} <${fromEmail}>`;
 
-    const sendResult = await env.EMAIL.send({
-      to: destinationEmail,
-      from: { email: fromEmail, name: fromName },
-      replyTo: { email, name },
-      subject,
-      text: [
-        "New Contact Form Message",
-        `Name: ${name}`,
-        `Email: ${email}`,
-        `Phone: ${phone}`,
-        `Address: ${address}`,
-        "Message:",
-        message,
-      ].join("\n"),
-      html: `
+    const resendResponse = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: normalizedFrom,
+        to: [destinationEmail],
+        reply_to: replyTo,
+        subject,
+        text: [
+          "New Contact Form Message",
+          `Name: ${name}`,
+          `Email: ${email}`,
+          `Phone: ${phone}`,
+          `Address: ${address}`,
+          "Message:",
+          message,
+        ].join("\n"),
+        html: `
         <h2>New Contact Form Message</h2>
         <p><strong>Name:</strong> ${safeName}</p>
         <p><strong>Email:</strong> ${safeEmail}</p>
@@ -93,13 +104,25 @@ const handleContact = async (request, env) => {
         <p><strong>Message:</strong></p>
         <p>${safeMessage}</p>
       `,
+      }),
     });
+
+    const resendPayload = await resendResponse.json().catch(() => null);
+
+    if (!resendResponse.ok) {
+      return json(502, {
+        error:
+          resendPayload?.message ??
+          resendPayload?.error ??
+          "Failed to send email via Resend.",
+      });
+    }
 
     return json(200, {
       success: true,
       to: destinationEmail,
       subject,
-      messageId: sendResult?.messageId ?? null,
+      id: resendPayload?.id ?? null,
     });
   } catch (error) {
     return json(502, {

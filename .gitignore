@@ -1,0 +1,17 @@
+node_modules/
+dist/
+
+.env
+.env.local
+.env.*.local
+
+*.log
+devserver.log
+devserver.err.log
+full-dev.log
+full-dev.err.log
+mail-test.log
+mail-test.err.log
+
+.DS_Store
+Thumbs.db

@@ -7,6 +7,8 @@ const apiPort = Number(process.env.API_PORT ?? "8787");
 const fromEmail = process.env.CONTACT_FROM_EMAIL ?? process.env.RESEND_FROM ?? "customers@asrvtech.in";
 const fromName = process.env.CONTACT_FROM_NAME ?? "ASRV Tech";
 const destinationEmail = process.env.CONTACT_TO_EMAIL ?? "customers@asrvtech.in";
+const cloudflareAccountId = process.env.CF_ACCOUNT_ID ?? process.env.CLOUDFLARE_ACCOUNT_ID;
+const cloudflareApiToken = process.env.CF_API_TOKEN ?? process.env.CLOUDFLARE_API_TOKEN;
 
 const escapeHtml = (value) =>
   value
@@ -59,6 +61,15 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (!cloudflareAccountId || !cloudflareApiToken) {
+    const response = json(500, {
+      error: "CF_ACCOUNT_ID and CF_API_TOKEN are required for local email sending.",
+    });
+    res.writeHead(response.statusCode, response.headers);
+    res.end(response.body);
+    return;
+  }
+
   try {
     const payload = await readBody(req);
     const name = String(payload.name ?? "").trim();
@@ -83,55 +94,49 @@ const server = createServer(async (req, res) => {
     const subject = `New website inquiry from ${name} - ${new Date().toISOString()}`;
 
     const mailPayload = {
-      personalizations: [
-        {
-          to: [{ email: destinationEmail }],
-        },
-      ],
-      from: { email: fromEmail, name: fromName },
-      reply_to: { email, name },
+      to: destinationEmail,
+      from: { address: fromEmail, name: fromName },
+      reply_to: email,
       subject,
-      content: [
-        {
-          type: "text/plain",
-          value: [
-            "New Contact Form Message",
-            `Name: ${name}`,
-            `Email: ${email}`,
-            `Phone: ${phone}`,
-            `Address: ${address}`,
-            "Message:",
-            message,
-          ].join("\n"),
-        },
-        {
-          type: "text/html",
-          value: `
-          <h2>New Contact Form Message</h2>
-          <p><strong>Name:</strong> ${safeName}</p>
-          <p><strong>Email:</strong> ${safeEmail}</p>
-          <p><strong>Phone:</strong> ${safePhone}</p>
-          <p><strong>Address:</strong> ${safeAddress}</p>
-          <p><strong>Message:</strong></p>
-          <p>${safeMessage}</p>
-        `,
-        },
-      ],
+      text: [
+        "New Contact Form Message",
+        `Name: ${name}`,
+        `Email: ${email}`,
+        `Phone: ${phone}`,
+        `Address: ${address}`,
+        "Message:",
+        message,
+      ].join("\n"),
+      html: `
+        <h2>New Contact Form Message</h2>
+        <p><strong>Name:</strong> ${safeName}</p>
+        <p><strong>Email:</strong> ${safeEmail}</p>
+        <p><strong>Phone:</strong> ${safePhone}</p>
+        <p><strong>Address:</strong> ${safeAddress}</p>
+        <p><strong>Message:</strong></p>
+        <p>${safeMessage}</p>
+      `,
     };
 
-    const mailResponse = await fetch("https://api.mailchannels.net/tx/v1/send", {
+    const mailResponse = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/email/sending/send`,
+      {
       method: "POST",
       headers: {
+        Authorization: `Bearer ${cloudflareApiToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(mailPayload),
-    });
+      },
+    );
 
-    const mailError = await mailResponse.text().catch(() => "");
+    const cloudflarePayload = await mailResponse.json().catch(() => null);
 
     if (!mailResponse.ok) {
       const response = json(502, {
-        error: mailError || "Failed to send email via Cloudflare transport.",
+        error:
+          cloudflarePayload?.errors?.[0]?.message ??
+          "Failed to send email via Cloudflare Email REST API.",
       });
       res.writeHead(response.statusCode, response.headers);
       res.end(response.body);

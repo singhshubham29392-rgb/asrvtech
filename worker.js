@@ -64,59 +64,49 @@ const handleContact = async (request, env) => {
     const safeMessage = escapeHtml(message).replace(/\n/g, "<br/>");
     const subject = `New website inquiry from ${name} - ${new Date().toISOString()}`;
 
-    const mailPayload = {
-      personalizations: [
-        {
-          to: [{ email: destinationEmail }],
-        },
-      ],
-      from: { email: fromEmail, name: fromName },
-      reply_to: { email, name },
-      subject,
-      content: [
-        {
-          type: "text/plain",
-          value: [
-            "New Contact Form Message",
-            `Name: ${name}`,
-            `Email: ${email}`,
-            `Phone: ${phone}`,
-            `Address: ${address}`,
-            "Message:",
-            message,
-          ].join("\n"),
-        },
-        {
-          type: "text/html",
-          value: `
-            <h2>New Contact Form Message</h2>
-            <p><strong>Name:</strong> ${safeName}</p>
-            <p><strong>Email:</strong> ${safeEmail}</p>
-            <p><strong>Phone:</strong> ${safePhone}</p>
-            <p><strong>Address:</strong> ${safeAddress}</p>
-            <p><strong>Message:</strong></p>
-            <p>${safeMessage}</p>
-          `,
-        },
-      ],
-    };
-
-    const response = await fetch("https://api.mailchannels.net/tx/v1/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(mailPayload),
-    });
-
-    if (!response.ok) {
-      const errorPayload = await response.text().catch(() => "");
-      return json(502, {
-        error: errorPayload || "Failed to send email via Cloudflare transport.",
+    if (!env.EMAIL || typeof env.EMAIL.send !== "function") {
+      return json(500, {
+        error: "Cloudflare EMAIL binding is not configured.",
       });
     }
 
-    return json(200, { success: true, to: destinationEmail, subject });
-  } catch {
-    return json(500, { error: "Unexpected error while sending message." });
+    const sendResult = await env.EMAIL.send({
+      to: destinationEmail,
+      from: { email: fromEmail, name: fromName },
+      replyTo: { email, name },
+      subject,
+      text: [
+        "New Contact Form Message",
+        `Name: ${name}`,
+        `Email: ${email}`,
+        `Phone: ${phone}`,
+        `Address: ${address}`,
+        "Message:",
+        message,
+      ].join("\n"),
+      html: `
+        <h2>New Contact Form Message</h2>
+        <p><strong>Name:</strong> ${safeName}</p>
+        <p><strong>Email:</strong> ${safeEmail}</p>
+        <p><strong>Phone:</strong> ${safePhone}</p>
+        <p><strong>Address:</strong> ${safeAddress}</p>
+        <p><strong>Message:</strong></p>
+        <p>${safeMessage}</p>
+      `,
+    });
+
+    return json(200, {
+      success: true,
+      to: destinationEmail,
+      subject,
+      messageId: sendResult?.messageId ?? null,
+    });
+  } catch (error) {
+    return json(502, {
+      error:
+        (error && typeof error === "object" && "message" in error && error.message) ||
+        "Unexpected error while sending message.",
+    });
   }
 };
 

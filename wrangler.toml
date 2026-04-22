@@ -6,6 +6,9 @@ compatibility_date = "2026-04-22"
 binding = "ASSETS"
 directory = "dist/public"
 
+[[send_email]]
+name = "EMAIL"
+
 [vars]
 CONTACT_TO_EMAIL = "customers@asrvtech.in"
 CONTACT_FROM_EMAIL = "customers@asrvtech.in"

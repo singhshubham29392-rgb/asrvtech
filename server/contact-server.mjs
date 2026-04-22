@@ -4,9 +4,9 @@ import { config } from "dotenv";
 config();
 
 const apiPort = Number(process.env.API_PORT ?? "8787");
-const resendApiKey = process.env.RESEND_API_KEY;
-const fromEmail = process.env.RESEND_FROM ?? "ASRV Tech <onboarding@resend.dev>";
-const destinationEmail = process.env.CONTACT_TO_EMAIL ?? "singhshubham29392@gmail.com";
+const fromEmail = process.env.CONTACT_FROM_EMAIL ?? process.env.RESEND_FROM ?? "customers@asrvtech.in";
+const fromName = process.env.CONTACT_FROM_NAME ?? "ASRV Tech";
+const destinationEmail = process.env.CONTACT_TO_EMAIL ?? "customers@asrvtech.in";
 
 const escapeHtml = (value) =>
   value
@@ -59,13 +59,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  if (!resendApiKey) {
-    const response = json(500, { error: "RESEND_API_KEY is not configured on server." });
-    res.writeHead(response.statusCode, response.headers);
-    res.end(response.body);
-    return;
-  }
-
   try {
     const payload = await readBody(req);
     const name = String(payload.name ?? "").trim();
@@ -89,27 +82,31 @@ const server = createServer(async (req, res) => {
 
     const subject = `New website inquiry from ${name} - ${new Date().toISOString()}`;
 
-    const resendResponse = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: fromEmail,
-        to: [destinationEmail],
-        reply_to: email,
-        subject,
-        text: [
-          "New Contact Form Message",
-          `Name: ${name}`,
-          `Email: ${email}`,
-          `Phone: ${phone}`,
-          `Address: ${address}`,
-          "Message:",
-          message,
-        ].join("\n"),
-        html: `
+    const mailPayload = {
+      personalizations: [
+        {
+          to: [{ email: destinationEmail }],
+        },
+      ],
+      from: { email: fromEmail, name: fromName },
+      reply_to: { email, name },
+      subject,
+      content: [
+        {
+          type: "text/plain",
+          value: [
+            "New Contact Form Message",
+            `Name: ${name}`,
+            `Email: ${email}`,
+            `Phone: ${phone}`,
+            `Address: ${address}`,
+            "Message:",
+            message,
+          ].join("\n"),
+        },
+        {
+          type: "text/html",
+          value: `
           <h2>New Contact Form Message</h2>
           <p><strong>Name:</strong> ${safeName}</p>
           <p><strong>Email:</strong> ${safeEmail}</p>
@@ -118,21 +115,30 @@ const server = createServer(async (req, res) => {
           <p><strong>Message:</strong></p>
           <p>${safeMessage}</p>
         `,
-      }),
+        },
+      ],
+    };
+
+    const mailResponse = await fetch("https://api.mailchannels.net/tx/v1/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(mailPayload),
     });
 
-    const resendPayload = await resendResponse.json().catch(() => null);
+    const mailError = await mailResponse.text().catch(() => "");
 
-    if (!resendResponse.ok) {
+    if (!mailResponse.ok) {
       const response = json(502, {
-        error: resendPayload?.message ?? "Failed to send email via Resend.",
+        error: mailError || "Failed to send email via Cloudflare transport.",
       });
       res.writeHead(response.statusCode, response.headers);
       res.end(response.body);
       return;
     }
 
-    const response = json(200, { success: true, id: resendPayload?.id ?? null, to: destinationEmail, subject });
+    const response = json(200, { success: true, to: destinationEmail, subject });
     res.writeHead(response.statusCode, response.headers);
     res.end(response.body);
   } catch {

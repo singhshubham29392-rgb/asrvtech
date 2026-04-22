@@ -4,6 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 const rawPort = process.env.PORT ?? "5173";
 
 const port = Number(rawPort);
@@ -34,6 +36,7 @@ export default defineConfig({
           ),
         ]
       : []),
+    cloudflare()
   ],
   resolve: {
     alias: {
